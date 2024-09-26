@@ -8,7 +8,6 @@ import com.revrobotics.ColorSensorV3;
 import edu.wpi.first.networktables.GenericEntry;
 import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.I2C;
-import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
 import edu.wpi.first.wpilibj.shuffleboard.ShuffleboardTab;
 import edu.wpi.first.wpilibj.util.Color;
@@ -41,7 +40,6 @@ public class RollerSubsystem extends SubsystemBase {
     private final TrackingTimer openTimer = new TrackingTimer();
     private final TrackingTimer closeTimer = new TrackingTimer();
     private final TrackingTimer cooldownTimer = new TrackingTimer();
-    private final TrackingTimer colorTimer = new TrackingTimer();
 
     private static final double OPEN_TIME_SECONDS = 1.0;
     private static final double CLOSE_TIME_SECONDS = 0.5;
@@ -66,7 +64,7 @@ public class RollerSubsystem extends SubsystemBase {
     //for tuning
     private final ShuffleboardTab shuffleboardTab;
     private final GenericEntry limitEntry, proximityEntry, colorEntry, heldPieceEntry;
-    private final GenericEntry rEntry, gEntry, bEntry;
+    private final GenericEntry rEntry, gEntry, bEntry, connectedEntry;
 
     private double rollPower = 0.0;
 
@@ -111,6 +109,9 @@ public class RollerSubsystem extends SubsystemBase {
             .getEntry();
         bEntry = shuffleboardTab.add("B", 0)
             .withPosition(2, 1)
+            .getEntry();
+        connectedEntry = shuffleboardTab.add("Sensor connected", 0)
+            .withPosition(3, 1)
             .getEntry();
     }
 
@@ -226,50 +227,31 @@ public class RollerSubsystem extends SubsystemBase {
      * @return The piece detected by the color sensor.
      */
     private HeldPiece getColorSensorPiece() {
+        // If we're not connected, return EMPTY and fall through to limit switch.
+        colorSensorConnected = crolorSensor.isConnected();
+        connectedEntry.setBoolean(colorSensorConnected);
+        if (!colorSensorConnected) return HeldPiece.EMPTY;
+
         Color detectedColor = crolorSensor.getColor();
         double red = detectedColor.red * 255;
         double green = detectedColor.green * 255;
         double blue = detectedColor.blue * 255;
 
-        // for tuning
         rEntry.setValue(red);
         gEntry.setValue(green);
         bEntry.setValue(blue);
 
-        //if the color is 0 0 0, the sensor is broken and should be rebooted
-        //only do this every couple seconds
-        if(red == 0 && green == 0 && blue == 0){
-            colorSensorConnected = false;
-            if(!colorTimer.hasStarted()){
-                crolorSensor = new ColorSensorV3(I2C.Port.kMXP);
-                colorTimer.start();
-            } else if (colorTimer.advanceIfElapsed(2)){
-                crolorSensor = new ColorSensorV3(I2C.Port.kMXP);
-            }
-        } else {
-            colorSensorConnected = true;
-            if (colorTimer.hasStarted()) {
-                colorTimer.stop();
-                colorTimer.reset();
-            }
-        }
-
-        //calculate 3d distance between measured point and each set points
+        // Calculate 3d distance between measured RGB and the EMPTY, CONE, and CUBE RGB values.
         double emptyDist = Math.pow(EMPTY_RED - red, 2) + Math.pow(EMPTY_GREEN - green, 2) + Math.pow(EMPTY_BLUE - blue, 2);
         double coneDist = Math.pow(CONE_RED - red, 2) + Math.pow(CONE_GREEN - green, 2) + Math.pow(CONE_BLUE - blue, 2);
         double cubeDist = Math.pow(CUBE_RED - red, 2) + Math.pow(CUBE_GREEN - green, 2) + Math.pow(CUBE_BLUE - blue, 2);
 
-        // System.out.println("empty -  " + emptyDist + " cone - " + coneDist + " cube - " + cubeDist);
-
-        //determine that the piece is the one with the least 3d distance
-        if (cubeDist < coneDist && cubeDist < emptyDist){
-            // System.out.print("CUBE ");
+        // Return the piece with the least 3d distance.
+        if (cubeDist < coneDist && cubeDist < emptyDist) {
             return HeldPiece.CUBE;
-        } else if (coneDist < emptyDist){
-            // System.out.print("CONE ");
+        } else if (coneDist < emptyDist) {
             return HeldPiece.CONE;
         } else {
-            // System.out.print("NONE ");
             return HeldPiece.EMPTY;
         }
     }
